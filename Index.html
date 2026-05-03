@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taper Tracker</title>
+
+<style>
+body { font-family:-apple-system,sans-serif; margin:0; padding:16px; background:#f5f5f7; }
+.container { max-width:420px; margin:0 auto; }
+.card { background:white; border-radius:16px; padding:16px; margin-bottom:12px; }
+
+.dose { font-size:28px; font-weight:bold; }
+.day { font-size:18px; font-weight:600; }
+.date { font-size:14px; color:#666; }
+
+.editing { background:#ff3b30; color:white; padding:8px; border-radius:8px; margin-top:6px; font-size:13px; font-weight:bold; text-align:center; }
+
+.row { display:flex; gap:8px; margin-top:8px; }
+button { flex:1; padding:12px; border:none; border-radius:12px; background:#e5e5ea; }
+button.active { background:#007aff; color:white; }
+
+input[type="time"] {
+width:100%;
+padding:12px;
+margin-top:8px;
+border-radius:12px;
+border:1px solid #ddd;
+font-size:16px;
+}
+
+.save-btn {
+margin-top:12px;
+background:#34c759;
+color:white;
+font-weight:bold;
+}
+
+.history-item { font-size:13px; border-top:1px solid #eee; padding:10px 0; white-space:pre-line; cursor:pointer; }
+
+.plan-item { padding:6px; border-top:1px solid #eee; }
+.current { background:#34c759; color:white; border-radius:6px; }
+
+.hidden { display:none; }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="card">
+  <div id="dose" class="dose"></div>
+  <div id="day" class="day"></div>
+  <div id="date" class="date"></div>
+  <div id="medStatus"></div>
+  <div id="editingBanner" class="editing hidden">EDITING ENTRY</div>
+
+  <div class="row hidden" id="homeRow">
+    <button onclick="goHome()">Back</button>
+  </div>
+</div>
+
+<div class="card">
+
+<div>Took Medication?</div>
+<div class="row" id="takenRow">
+<button onclick="setTaken(true,this)">Yes</button>
+<button onclick="setTaken(false,this)">No</button>
+</div>
+
+<input type="time" id="timeInput">
+
+<div>Sleep</div>
+<div class="row" id="sleepRow">
+<button onclick="setValue('sleep',this,'good')">Good</button>
+<button onclick="setValue('sleep',this,'mid')">Mid</button>
+<button onclick="setValue('sleep',this,'bad')">Bad</button>
+</div>
+
+<div>Restlessness</div>
+<div class="row" id="restRow">
+<button onclick="setValue('rest',this,'low')">Low</button>
+<button onclick="setValue('rest',this,'mid')">Mid</button>
+<button onclick="setValue('rest',this,'high')">High</button>
+</div>
+
+<div>Activation</div>
+<div class="row" id="actRow">
+<button onclick="setValue('act',this,'low')">Low</button>
+<button onclick="setValue('act',this,'mid')">Mid</button>
+<button onclick="setValue('act',this,'high')">High</button>
+</div>
+
+<div>Anxiety</div>
+<div class="row" id="anxietyRow">
+<button onclick="setValue('anxiety',this,'low')">Low</button>
+<button onclick="setValue('anxiety',this,'mid')">Mid</button>
+<button onclick="setValue('anxiety',this,'high')">High</button>
+</div>
+
+<div>Irritability</div>
+<div class="row" id="irritRow">
+<button onclick="setValue('irrit',this,'low')">Low</button>
+<button onclick="setValue('irrit',this,'mid')">Mid</button>
+<button onclick="setValue('irrit',this,'high')">High</button>
+</div>
+
+<div>Body</div>
+<div class="row" id="bodyRow">
+<button onclick="setValue('body',this,'low')">Low</button>
+<button onclick="setValue('body',this,'mid')">Mid</button>
+<button onclick="setValue('body',this,'high')">High</button>
+</div>
+
+<button class="save-btn" onclick="saveDay()">SAVE DAY</button>
+
+</div>
+
+<div class="card">
+<div onclick="togglePlan()" style="font-weight:bold;cursor:pointer;">Upcoming Plan</div>
+<div id="plan" class="hidden"></div>
+</div>
+
+<div class="card">
+<div onclick="toggleHistory()" style="font-weight:bold;cursor:pointer;">History</div>
+<div id="history" class="hidden"></div>
+</div>
+
+</div>
+
+<script>
+
+const phases = [2,1.5,1,0.75,0.5,0.25,0];
+const START = new Date("2026-05-01T00:00:00");
+
+function buildHistory(){
+  let arr=[];
+  for(let i=1;i<=10;i++){
+    let d=new Date(START);
+    d.setDate(d.getDate()+(i-1));
+    arr.push({
+      key:i,
+      day:i,
+      date:d.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}),
+      taken:null,time:null,sleep:null,rest:null,act:null,anxiety:null,irrit:null,body:null
+    });
+  }
+  return arr;
+}
+
+let data = JSON.parse(localStorage.getItem('taperData'));
+if(!data || !data.history || data.history.length !== 10){
+  data = { step:1,currentDay:1,taken:null,sleep:null,rest:null,act:null,anxiety:null,irrit:null,body:null,history: buildHistory() };
+}
+
+let editingEntry=null;
+
+function save(){ localStorage.setItem('taperData', JSON.stringify(data)); }
+
+function getDateFromDay(day){
+  let d=new Date(START);
+  d.setDate(d.getDate()+(day-1));
+  return d;
+}
+
+function formatDate(d){
+  return d.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'});
+}
+
+function clearActive(){
+  document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+}
+
+function restoreRow(rowId,value){
+  if(value===null || value===undefined) return;
+  document.querySelectorAll(`#${rowId} button`).forEach(b=>{
+    if(b.innerText.toLowerCase()===value){
+      b.classList.add('active');
+    }
+  });
+}
+
+function setTaken(val,btn){
+  data.taken=val;
+  document.querySelectorAll('#takenRow button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function setValue(key,el,val){
+  data[key]=val;
+  document.querySelectorAll(`#${el.parentElement.id} button`).forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function saveDay(){
+  let entry=data.history.find(h=>h.day === (editingEntry ? editingEntry.day : data.currentDay));
+
+  entry.time = data.taken ? document.getElementById('timeInput').value : null;
+  entry.taken=data.taken;
+  entry.sleep=data.sleep;
+  entry.rest=data.rest;
+  entry.act=data.act;
+  entry.anxiety=data.anxiety;
+  entry.irrit=data.irrit;
+  entry.body=data.body;
+
+  if(!editingEntry && data.currentDay<10) data.currentDay++;
+
+  editingEntry=null;
+  save();
+  resetInputs();
+  update();
+}
+
+function resetInputs(){
+  data.taken=null;
+  data.sleep=null;
+  data.rest=null;
+  data.act=null;
+  data.anxiety=null;
+  data.irrit=null;
+  data.body=null;
+
+  clearActive();
+  document.getElementById('timeInput').value="";
+}
+
+function loadEntry(entry){
+  editingEntry=entry;
+
+  data.taken=entry.taken;
+  data.sleep=entry.sleep;
+  data.rest=entry.rest;
+  data.act=entry.act;
+  data.anxiety=entry.anxiety;
+  data.irrit=entry.irrit;
+  data.body=entry.body;
+
+  document.getElementById('timeInput').value=entry.time||"";
+
+  document.getElementById('editingBanner').classList.remove('hidden');
+  document.getElementById('homeRow').classList.remove('hidden');
+
+  updateHeader(entry.day);
+
+  //  RESTORE BUTTON STATES
+  clearActive();
+
+  if(entry.taken===true) restoreRow("takenRow","yes");
+  if(entry.taken===false) restoreRow("takenRow","no");
+
+  restoreRow("sleepRow",entry.sleep);
+  restoreRow("restRow",entry.rest);
+  restoreRow("actRow",entry.act);
+  restoreRow("anxietyRow",entry.anxiety);
+  restoreRow("irritRow",entry.irrit);
+  restoreRow("bodyRow",entry.body);
+}
+
+function goHome(){
+  editingEntry=null;
+  document.getElementById('editingBanner').classList.add('hidden');
+  document.getElementById('homeRow').classList.add('hidden');
+  update();
+}
+
+function updateHeader(day){
+  document.getElementById('day').innerText="Day "+day;
+  document.getElementById('date').innerText=formatDate(getDateFromDay(day));
+}
+
+function renderHistory(){
+  let el=document.getElementById('history');
+  el.innerHTML='';
+
+  data.history.forEach(h=>{
+    let div=document.createElement('div');
+    div.className='history-item';
+
+    div.innerText =
+      "Day " + h.day + "\n" +
+      h.date + "\n" +
+      (h.taken ? "Taken at " + (h.time || "--") : "Not taken");
+
+    div.onclick=()=>loadEntry(h);
+    el.appendChild(div);
+  });
+}
+
+function renderPlan(){
+  let el=document.getElementById('plan');
+  el.innerHTML='';
+  let start=1;
+  for(let i=1;i<phases.length;i++){
+    let end=start+9;
+    let div=document.createElement('div');
+    div.className = (i===data.step) ? "plan-item current" : "plan-item";
+    div.innerText="Days "+start+"-"+end+" � "+phases[i]+" mg";
+    el.appendChild(div);
+    start+=10;
+  }
+}
+
+function toggleHistory(){ document.getElementById('history').classList.toggle('hidden'); }
+function togglePlan(){ document.getElementById('plan').classList.toggle('hidden'); }
+
+function update(){
+  updateHeader(data.currentDay);
+  document.getElementById('dose').innerText=phases[data.step]+" mg";
+
+  document.getElementById('medStatus').innerText =
+    data.taken===true ? "Taken" :
+    data.taken===false ? "Not taken" : "Not set";
+
+  renderHistory();
+  renderPlan();
+}
+
+update();
+
+</script>
+
+</body>
+</html>  <div id="editingBanner" class="editing hidden">EDITING ENTRY</div>
+
+  <div class="row hidden" id="homeRow">
+    <button onclick="goHome()">Back</button>
+  </div>
+</div>
+
+<div class="card">
+
+<div>Took Medication?</div>
+<div class="row" id="takenRow">
+<button onclick="setTaken(true,this)">Yes</button>
+<button onclick="setTaken(false,this)">No</button>
+</div>
+
+<input type="time" id="timeInput">
+
+<div>Sleep</div>
+<div class="row" id="sleepRow">
+<button onclick="setValue('sleep',this,'good')">Good</button>
+<button onclick="setValue('sleep',this,'mid')">Mid</button>
+<button onclick="setValue('sleep',this,'bad')">Bad</button>
+</div>
+
+<div>Restlessness</div>
+<div class="row" id="restRow">
+<button onclick="setValue('rest',this,'low')">Low</button>
+<button onclick="setValue('rest',this,'mid')">Mid</button>
+<button onclick="setValue('rest',this,'high')">High</button>
+</div>
+
+<div>Activation</div>
+<div class="row" id="actRow">
+<button onclick="setValue('act',this,'low')">Low</button>
+<button onclick="setValue('act',this,'mid')">Mid</button>
+<button onclick="setValue('act',this,'high')">High</button>
+</div>
+
+<div>Anxiety</div>
+<div class="row" id="anxietyRow">
+<button onclick="setValue('anxiety',this,'low')">Low</button>
+<button onclick="setValue('anxiety',this,'mid')">Mid</button>
+<button onclick="setValue('anxiety',this,'high')">High</button>
+</div>
+
+<div>Irritability</div>
+<div class="row" id="irritRow">
+<button onclick="setValue('irrit',this,'low')">Low</button>
+<button onclick="setValue('irrit',this,'mid')">Mid</button>
+<button onclick="setValue('irrit',this,'high')">High</button>
+</div>
+
+<div>Body</div>
+<div class="row" id="bodyRow">
+<button onclick="setValue('body',this,'low')">Low</button>
+<button onclick="setValue('body',this,'mid')">Mid</button>
+<button onclick="setValue('body',this,'high')">High</button>
+</div>
+
+<button class="save-btn" onclick="saveDay()">SAVE DAY</button>
+
+</div>
+
+<div class="card">
+<div onclick="togglePlan()" style="font-weight:bold;cursor:pointer;">Upcoming Plan</div>
+<div id="plan" class="hidden"></div>
+</div>
+
+<div class="card">
+<div onclick="toggleHistory()" style="font-weight:bold;cursor:pointer;">History</div>
+<div id="history" class="hidden"></div>
+</div>
+
+</div>
+
+<script>
+
+const phases = [2,1.5,1,0.75,0.5,0.25,0];
+const START = new Date("2026-05-01T00:00:00");
+
+function buildHistory(){
+  let arr=[];
+  for(let i=1;i<=10;i++){
+    let d=new Date(START);
+    d.setDate(d.getDate()+(i-1));
+    arr.push({
+      key:i,
+      day:i,
+      date:d.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}),
+      taken:null,time:null,sleep:null,rest:null,act:null,anxiety:null,irrit:null,body:null
+    });
+  }
+  return arr;
+}
+
+let data = JSON.parse(localStorage.getItem('taperData'));
+if(!data || !data.history || data.history.length !== 10){
+  data = { step:1,currentDay:1,taken:null,sleep:null,rest:null,act:null,anxiety:null,irrit:null,body:null,history: buildHistory() };
+}
+
+let editingEntry=null;
+
+function save(){ localStorage.setItem('taperData', JSON.stringify(data)); }
+
+function getDateFromDay(day){
+  let d=new Date(START);
+  d.setDate(d.getDate()+(day-1));
+  return d;
+}
+
+function formatDate(d){
+  return d.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'});
+}
+
+function clearActive(){
+  document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+}
+
+function restoreRow(rowId,value){
+  if(value===null || value===undefined) return;
+  document.querySelectorAll(`#${rowId} button`).forEach(b=>{
+    if(b.innerText.toLowerCase()===value){
+      b.classList.add('active');
+    }
+  });
+}
+
+function setTaken(val,btn){
+  data.taken=val;
+  document.querySelectorAll('#takenRow button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function setValue(key,el,val){
+  data[key]=val;
+  document.querySelectorAll(`#${el.parentElement.id} button`).forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function saveDay(){
+  let entry=data.history.find(h=>h.day === (editingEntry ? editingEntry.day : data.currentDay));
+
+  entry.time = data.taken ? document.getElementById('timeInput').value : null;
+  entry.taken=data.taken;
+  entry.sleep=data.sleep;
+  entry.rest=data.rest;
+  entry.act=data.act;
+  entry.anxiety=data.anxiety;
+  entry.irrit=data.irrit;
+  entry.body=data.body;
+
+  if(!editingEntry && data.currentDay<10) data.currentDay++;
+
+  editingEntry=null;
+  save();
+  resetInputs();
+  update();
+}
+
+function resetInputs(){
+  data.taken=null;
+  data.sleep=null;
+  data.rest=null;
+  data.act=null;
+  data.anxiety=null;
+  data.irrit=null;
+  data.body=null;
+
+  clearActive();
+  document.getElementById('timeInput').value="";
+}
+
+function loadEntry(entry){
+  editingEntry=entry;
+
+  data.taken=entry.taken;
+  data.sleep=entry.sleep;
+  data.rest=entry.rest;
+  data.act=entry.act;
+  data.anxiety=entry.anxiety;
+  data.irrit=entry.irrit;
+  data.body=entry.body;
+
+  document.getElementById('timeInput').value=entry.time||"";
+
+  document.getElementById('editingBanner').classList.remove('hidden');
+  document.getElementById('homeRow').classList.remove('hidden');
+
+  updateHeader(entry.day);
+
+  //  RESTORE BUTTON STATES
+  clearActive();
+
+  if(entry.taken===true) restoreRow("takenRow","yes");
+  if(entry.taken===false) restoreRow("takenRow","no");
+
+  restoreRow("sleepRow",entry.sleep);
+  restoreRow("restRow",entry.rest);
+  restoreRow("actRow",entry.act);
+  restoreRow("anxietyRow",entry.anxiety);
+  restoreRow("irritRow",entry.irrit);
+  restoreRow("bodyRow",entry.body);
+}
+
+function goHome(){
+  editingEntry=null;
+  document.getElementById('editingBanner').classList.add('hidden');
+  document.getElementById('homeRow').classList.add('hidden');
+  update();
+}
+
+function updateHeader(day){
+  document.getElementById('day').innerText="Day "+day;
+  document.getElementById('date').innerText=formatDate(getDateFromDay(day));
+}
+
+function renderHistory(){
+  let el=document.getElementById('history');
+  el.innerHTML='';
+
+  data.history.forEach(h=>{
+    let div=document.createElement('div');
+    div.className='history-item';
+
+    div.innerText =
+      "Day " + h.day + "\n" +
+      h.date + "\n" +
+      (h.taken ? "Taken at " + (h.time || "--") : "Not taken");
+
+    div.onclick=()=>loadEntry(h);
+    el.appendChild(div);
+  });
+}
+
+function renderPlan(){
+  let el=document.getElementById('plan');
+  el.innerHTML='';
+  let start=1;
+  for(let i=1;i<phases.length;i++){
+    let end=start+9;
+    let div=document.createElement('div');
+    div.className = (i===data.step) ? "plan-item current" : "plan-item";
+    div.innerText="Days "+start+"-"+end+" � "+phases[i]+" mg";
+    el.appendChild(div);
+    start+=10;
+  }
+}
+
+function toggleHistory(){ document.getElementById('history').classList.toggle('hidden'); }
+function togglePlan(){ document.getElementById('plan').classList.toggle('hidden'); }
+
+function update(){
+  updateHeader(data.currentDay);
+  document.getElementById('dose').innerText=phases[data.step]+" mg";
+
+  document.getElementById('medStatus').innerText =
+    data.taken===true ? "Taken" :
+    data.taken===false ? "Not taken" : "Not set";
+
+  renderHistory();
+  renderPlan();
+}
+
+update();
+
+</script>
+
+</body>
+</html>
